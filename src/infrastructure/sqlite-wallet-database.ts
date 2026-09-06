@@ -86,40 +86,20 @@ export class SqliteWalletDatabase
   }
 
   public listEvents(): WithdrawalEvent[] {
-    const rows = this.connection
-      .prepare(
-        `SELECT id, wallet_id, amount_minor, currency, occurred_at
-         FROM outbox_events
-         ORDER BY occurred_at, id`,
-      )
-      .all() as EventRow[];
-
-    return rows.map((row) => ({
-      id: row.id,
-      walletId: row.wallet_id,
-      amountMinor: row.amount_minor,
-      currency: row.currency,
-      occurredAt: new Date(row.occurred_at),
-    }));
+    return this.queryEvents(
+      `SELECT id, wallet_id, amount_minor, currency, occurred_at
+       FROM outbox_events
+       ORDER BY occurred_at, id`,
+    );
   }
 
   public listPendingEvents(): WithdrawalEvent[] {
-    const rows = this.connection
-      .prepare(
-        `SELECT id, wallet_id, amount_minor, currency, occurred_at
-         FROM outbox_events
-         WHERE published_at IS NULL
-         ORDER BY occurred_at, id`,
-      )
-      .all() as EventRow[];
-
-    return rows.map((row) => ({
-      id: row.id,
-      walletId: row.wallet_id,
-      amountMinor: row.amount_minor,
-      currency: row.currency,
-      occurredAt: new Date(row.occurred_at),
-    }));
+    return this.queryEvents(
+      `SELECT id, wallet_id, amount_minor, currency, occurred_at
+       FROM outbox_events
+       WHERE published_at IS NULL
+       ORDER BY occurred_at, id`,
+    );
   }
 
   public markEventPublished(eventId: string): void {
@@ -139,6 +119,18 @@ export class SqliteWalletDatabase
 
   public close(): void {
     this.connection.close();
+  }
+
+  private queryEvents(sql: string): WithdrawalEvent[] {
+    const rows = this.connection.prepare(sql).all() as EventRow[];
+
+    return rows.map((row) => ({
+      id: row.id,
+      walletId: row.wallet_id,
+      amountMinor: row.amount_minor,
+      currency: row.currency,
+      occurredAt: new Date(row.occurred_at),
+    }));
   }
 
   private createSchema(): void {
