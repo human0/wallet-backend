@@ -4,7 +4,10 @@ import { dirname } from 'node:path';
 import { GetBalance } from './application/get-balance.js';
 import { WithdrawFunds } from './application/withdraw-funds.js';
 import { buildServer } from './app.js';
-import { OutboxPublisher, type EventSink } from './infrastructure/outbox-publisher.js';
+import {
+  OutboxPublisher,
+  type EventSink,
+} from './infrastructure/outbox-publisher.js';
 import { startOutboxWorker } from './infrastructure/outbox-worker.js';
 import { SqliteWalletDatabase } from './infrastructure/sqlite-wallet-database.js';
 

@@ -49,8 +49,7 @@ describe('concurrent withdrawals', () => {
     const results = await Promise.all(attempts);
     const succeeded = results.filter((result) => result !== null);
 
-    const finalBalance = new GetBalance(database).execute('wallet-001')
-      .balance;
+    const finalBalance = new GetBalance(database).execute('wallet-001').balance;
 
     expect(succeeded).toHaveLength(10);
     expect(finalBalance.minorUnits).toBeGreaterThanOrEqual(0);
