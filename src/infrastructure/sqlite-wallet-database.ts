@@ -103,6 +103,35 @@ export class SqliteWalletDatabase
     }));
   }
 
+  public listPendingEvents(): WithdrawalEvent[] {
+    const rows = this.connection
+      .prepare(
+        `SELECT id, wallet_id, amount_minor, currency, occurred_at
+         FROM outbox_events
+         WHERE published_at IS NULL
+         ORDER BY occurred_at, id`,
+      )
+      .all() as EventRow[];
+
+    return rows.map((row) => ({
+      id: row.id,
+      walletId: row.wallet_id,
+      amountMinor: row.amount_minor,
+      currency: row.currency,
+      occurredAt: new Date(row.occurred_at),
+    }));
+  }
+
+  public markEventPublished(eventId: string): void {
+    this.connection
+      .prepare(
+        `UPDATE outbox_events
+         SET published_at = @publishedAt
+         WHERE id = @eventId`,
+      )
+      .run({ eventId, publishedAt: new Date().toISOString() });
+  }
+
   public run<T>(operation: () => T): T {
     const transaction = this.connection.transaction(operation);
     return transaction();
