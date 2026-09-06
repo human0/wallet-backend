@@ -1,24 +1,17 @@
 # Wallet Backend
 
-A TypeScript/Fastify backend for the Sanlam RA Ventures wallet assessment.
+A TypeScript/Fastify backend for the wallet assessment. See [wallet-frontend](https://github.com/human0/wallet-frontend) for the client.
 
-The backend exposes wallet balance and withdrawal operations through a layered, test-driven design. See the companion `wallet-frontend` repository for a client that demonstrates the API.
-
-## Local Development
-
-Requirements:
-
-- Node.js 24 LTS
-- npm
+## Run it
 
 ```bash
 npm install
 npm run dev
 ```
 
-The API listens on `http://127.0.0.1:3000`.
+API listens on `http://127.0.0.1:3000`.
 
-## Quality Commands
+## Checks
 
 ```bash
 npm run typecheck
@@ -28,7 +21,7 @@ npm test
 npm run build
 ```
 
-CI (`.github/workflows/ci.yml`) runs all five on every push and PR to `main`.
+Same five run in CI on every push/PR.
 
 ## API
 
@@ -37,125 +30,69 @@ GET  /wallets/:walletId/balance
 POST /wallets/:walletId/withdrawals
 ```
 
-The seeded wallet is `wallet-001` with an initial balance of ZAR 1,000.00. Money is represented as integer minor units internally and decimal strings at the HTTP boundary.
+Seeded wallet: `wallet-001`, ZAR 1,000.00. Money is integer minor units internally, decimal strings at the HTTP boundary.
 
-```http
+```text
 GET /wallets/wallet-001/balance
+-> {"walletId":"wallet-001","currency":"ZAR","balance":"1000.00"}
+
+POST /wallets/wallet-001/withdrawals {"amount":"250.00"}
+-> {"walletId":"wallet-001","amount":"250.00","remainingBalance":"750.00","status":"completed"}
 ```
 
-```json
-{
-  "walletId": "wallet-001",
-  "currency": "ZAR",
-  "balance": "1000.00"
-}
-```
-
-```http
-POST /wallets/wallet-001/withdrawals
-Content-Type: application/json
-
-{"amount":"250.00"}
-```
-
-```json
-{
-  "walletId": "wallet-001",
-  "amount": "250.00",
-  "remainingBalance": "750.00",
-  "status": "completed"
-}
-```
-
-Invalid amounts return `400`, unknown wallets return `404`, and insufficient funds return `409`.
-
-Expected withdrawal behavior:
-
-- Amount must be positive.
-- Withdrawal succeeds only when sufficient funds exist.
-- A wallet balance can never become negative.
-- A successful withdrawal creates one withdrawal event.
-- A failed withdrawal creates no withdrawal event.
+`400` invalid amount, `404` unknown wallet, `409` insufficient funds. A withdrawal must be positive, can't exceed the balance, and never creates an event on failure.
 
 ## Architecture
 
-The backend uses pragmatic layered architecture:
-
 ```text
-HTTP adapter (Fastify)
-        |
-Application services and ports
-        |
-Domain rules and money value objects
-        |
-Infrastructure adapters (SQLite, outbox worker)
+HTTP (Fastify) -> Application (use cases, ports) -> Domain (money, wallet rules)
+                                                   -> Infrastructure (SQLite, outbox worker)
 ```
 
-Domain code does not import Fastify, SQLite, or AWS SDKs. Application services depend on repository and event-publisher interfaces; infrastructure provides those implementations.
-
-See [docs/architecture.md](docs/architecture.md) for the design guide, transaction boundary, event flow, and AWS production mapping.
+Domain has no framework dependencies; application depends on interfaces, not SQLite directly. See [docs/architecture.md](docs/architecture.md).
 
 ## Event Mechanism
 
-Successful withdrawals write a row into a `outbox_events` table in the same database transaction as the balance update (the transactional outbox pattern), so a committed balance change can never be silently missing its event. A background worker (`startOutboxWorker`, wired into `server.ts`) polls that table every 2 seconds and hands pending events to a sink - currently a log line, standing in for EventBridge/SNS in production.
-
-```json
-{
-  "id": "event-id",
-  "walletId": "wallet-001",
-  "amountMinor": 25000,
-  "currency": "ZAR",
-  "occurredAt": "2026-09-06T12:00:00.000Z"
-}
-```
-
-Delivery is at-least-once: a failed publish leaves the event pending and it is retried on the next poll, without blocking other pending events in the same batch. A production consumer must use the event ID as an idempotency key.
-
-## Local vs. Production
-
-SQLite keeps the app runnable with no Docker, native install, or cloud credentials required; it is not the proposed production database. Production would use PostgreSQL (RDS/Aurora) for row-level locking, concurrent writes, backups, and durability - see `docs/architecture.md` for the full AWS mapping (EventBridge/SNS/SQS).
+A withdrawal writes an outbox row in the same DB transaction as the balance update. A background worker polls it every 2s and hands events to a sink (currently a log line, standing in for EventBridge/SNS). Delivery is at-least-once; failures stay pending and retry without blocking the rest of the batch.
 
 ## Assumptions
 
-- A single seeded wallet (`wallet-001`, ZAR 1,000.00) is the entire dataset; no wallet-creation endpoint is provided, per the assessment brief.
-- Withdrawal amounts are decimal strings with up to two fractional digits (`"250.00"`). Anything else - scientific notation, thousands separators, three or more decimal places - is rejected as invalid input rather than silently rounded or truncated.
-- "Emit a withdrawal event" is satisfied by the transactional outbox plus a polling worker; no external message broker is required to run this locally, and the `EventSink` interface is the seam where one would be plugged in.
-- No authentication or authorization on any request - explicitly out of scope per the assessment brief.
+- One seeded wallet, no wallet-creation endpoint.
+- Amounts are decimal strings with up to two fractional digits; anything else is rejected.
+- No auth - out of scope per the brief.
 
 ## Trade-offs
 
-- **SQLite vs. PostgreSQL**: zero external setup vs. production-grade concurrency. SQLite's single-writer locking model does not reflect PostgreSQL's row-level `SELECT ... FOR UPDATE`, which is the actual production target (see `docs/architecture.md`).
-- **Outbox worker logs instead of publishing**: no real broker is required to run this assessment locally. `EventSink` is a one-function interface so swapping in EventBridge/SNS is a small, isolated change, not a rewrite.
-- **Integer minor units instead of a bignum/decimal library**: simpler and sufficient for ZAR's fixed two-decimal precision, at the cost of not generalizing to currencies with different fractional digits.
-- **Interface segregation on `WalletReader`/`WalletRepository`**: `GetBalance` depends only on `findById`, not the full repository - a small deliberate choice to keep read-only use cases from depending on write capability they don't need.
+- SQLite over PostgreSQL: zero setup, but not the production concurrency target (see `docs/architecture.md`).
+- Outbox logs instead of publishing to a real broker; `EventSink` is a one-function seam to swap in EventBridge/SNS later.
+- Integer minor units instead of a bignum library - simple and sufficient for ZAR.
+- `GetBalance` depends only on `WalletReader`, not the full repository.
+- Two repos instead of a monorepo, to keep backend CI free of frontend churn.
 
-## Known Limitations
+## Limitations
 
-- No idempotency key on withdrawal requests: a retried HTTP request (e.g. from a flaky client) performs a second withdrawal rather than being deduplicated.
-- The outbox has no dead-letter queue or maximum retry count; a permanently failing sink retries the same event on every poll indefinitely.
-- Concurrency safety (`tests/concurrency`) is proven only within a single Node process against SQLite's synchronous driver; it does not exercise true multi-process/multi-instance contention.
-- No structured request tracing or correlation IDs across the API and the outbox worker.
+- No idempotency key on withdrawal requests.
+- Outbox has no dead-letter queue or retry cap.
+- Concurrency safety (`tests/concurrency`) is proven single-process only.
 
-## Potential Improvements
+## Possible Improvements
 
-- Idempotency keys on withdrawal requests.
-- PostgreSQL with row-level locking, proper migration tooling, and connection pooling.
-- Outbox dead-letter handling and alerting after N failed publish attempts.
-- OpenAPI schema generated from the existing zod validators.
-- Structured logging with request correlation IDs, plus metrics and tracing.
+- Idempotency keys, PostgreSQL row locking, outbox dead-lettering.
+- OpenAPI schema from the existing zod validators.
+- Structured logging with correlation IDs.
 
-See `docs/architecture.md`'s "Future Production Improvements" section for the full list, including authentication/authorization and an immutable transaction ledger.
+See `docs/architecture.md` for the full list.
 
 ## AI Usage
 
-Built by Emmanuel using Claude Code as a directed pair-programming tool, following a red-green-refactor loop with every commit verified locally before being made. See [docs/ai-usage.md](docs/ai-usage.md) for the full account.
+Development workflow was supported by AI assistent - Claude via VS Code.
+See `docs/ai-usage.md` for more details.
 
-## Testing Standard
+## Testing
 
-Each behavior starts with a failing test, followed by the smallest implementation, then a refactor while the tests stay green - visible directly in `git log`. Tests cover domain invariants, transaction rollback, outbox creation and retry, API contracts, and concurrent withdrawals.
+Domain invariants, transaction rollback, outbox creation/retry, API contracts, concurrent withdrawals - visible directly in `git log`.
 
 ## Scope
 
-Included: one seeded wallet, balance retrieval, withdrawals, withdrawal events, an outbox worker, automated tests, and technical documentation.
-
-Excluded: authentication, deposits, transfers, currency conversion, registration, wallet creation, request idempotency keys, and an immutable ledger.
+Included: one wallet, balance, withdrawals, events, outbox worker, tests, docs.
+Excluded: auth, deposits, transfers, currency conversion, wallet creation, idempotency keys, an immutable ledger.

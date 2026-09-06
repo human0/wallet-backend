@@ -38,4 +38,5 @@ The underlying technology choices for the project - Node.js/TypeScript, Fastify,
 
 - No code was committed without being run and verified locally first.
 - No design decision with a real trade-off was made without being surfaced for a decision.
+- No custom subagents, skills, or automation beyond the standard Claude Code CLI were used - every change went through the same directed, human-reviewed loop described above.
 - The author is responsible for, and can explain, every line, every commit, and every decision in this repository.

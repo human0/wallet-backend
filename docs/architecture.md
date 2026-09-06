@@ -63,6 +63,8 @@ The production PostgreSQL implementation would lock the wallet row with `SELECT 
 
 SQLite is used locally only to avoid external setup. Its locking model is documented as a local limitation; PostgreSQL is the production concurrency target.
 
+`tests/concurrency/withdrawals.test.ts` fires overlapping withdrawal attempts against one wallet and asserts the balance never goes negative. It passes today without any special locking code, because `better-sqlite3` calls are synchronous and a single Node process has no real interleaving for `Promise.all` to exploit - it proves the invariant holds locally, not that it would hold under true multi-process contention.
+
 ## Transactional Outbox
 
 The balance update and outbox insert must share one transaction. This prevents a committed balance change from being silently separated from its event record.
